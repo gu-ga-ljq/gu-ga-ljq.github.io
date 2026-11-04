@@ -1,9 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>两个正方形旋转重叠面积</title>
+<style>
+  body {
+    margin: 0;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+  }
+  h1 { font-size: 20px; margin: 16px 0 8px; font-weight: 600; }
+  #wrap { position: relative; }
+  canvas { background: #1e293b; border-radius: 12px; touch-action: none; }
+  .panel {
+    display: flex; gap: 24px; margin: 12px 0 20px;
+    font-size: 15px; flex-wrap: wrap; justify-content: center;
+  }
+  .panel b { color: #38bdf8; font-weight: 600; }
+  .hint { color: #94a3b8; font-size: 13px; margin-bottom: 12px; }
+</style>
+</head>
 <body>
-    <hr>
-    <h2>题目</h2>
-    <ul>
-        <li><a href="/about/">T1</a></li>
-        <li><a href="/blog/">T2</a></li>
-        <li><a href="/projects/">T3</a></li>
-    </ul>
+<h1>两个正方形旋转重叠面积</h1>
+<div class="hint">拖动旋转正方形的顶点（蓝色圆点）绕左上角旋转</div>
+<div id="wrap"><canvas id="cv" width="620" height="620"></canvas></div>
+<div class="panel">
+  <div>旋转角 α = <b id="ang">0.0°</b></div>
+  <div>重叠面积 S = <b id="area">1.000000</b></div>
+</div>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const angEl = document.getElementById('ang');
+const areaEl = document.getElementById('area');
+
+// 几何设置：正方形边长 1，固定正方形左上角在画布 (ox, oy)
+const SIZE = 1;
+const SCALE = 420;               // 1 单位 = 420 像素
+const ox = 100, oy = 100;        // 公共左上角在画布上的位置
+const sidePx = SIZE * SCALE;     // 420
+
+// 把数学坐标 (x 向右, y 向下) 转画布坐标
+// 数学坐标原点取公共左上角，x 向右，y 向下
+function toPx(x, y) {
+  return [ox + x * SCALE, oy + y * SCALE];
+}
+
+// 固定正方形顶点（数学坐标，左上角为原点）
+const fixed = [
+  {x: 0, y: 0}, // 左上
+  {x: 1, y: 0}, // 右上
+  {x: 1, y: 1}, // 右下
+  {x: 0, y: 1}  // 左下
+];
+
+let angle = 0; // 弧度，顺时针为正
+
+// 旋转正方形：绕左上角 (0,0) 顺时针旋转 angle
+function rotSquare(a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  // 顺时针旋转矩阵：x' = x*c + y*s, y' = -x*s + y*c
+  const R = (p) => ({ x: p.x * c + p.y * s, y: -p.x * s + p.y * c });
+  return fixed.map(R);
+}
+
+// 多边形裁剪：保留直线 AB 左侧（叉积 >= 0）
+function clipPolygon(poly, A, B) {
+  const res = [];
+  const n = poly.length;
+  const cross = (P, Q, R) => (Q.x - P.x) * (R.y - P.y) - (Q.y - P.y) * (R.x - P.x);
+  for (let i = 0; i < n; i++) {
+    const P = poly[i];
+    const Q = poly[(i + 1) % n];
+    const cp = cross(A, B, P);
+    const cq = cross(A, B, Q);
+    if (cp >= -1e-12) res.push(P);
+    if ((cp > 1e-12 && cq < -1e-12) || (cp < -1e-12 && cq > 1e-12)) {
+      const t = cp / (cp - cq);
+      res.push({ x: P.x + (Q.x - P.x) * t, y: P.y + (Q.y - P.y) * t });
+    }
+  }
+  return res;
+}
+
+// 求交集：用旋转正方形四条边裁剪固定正方形
+function intersection(fixedPoly, rotPoly) {
+  let poly = fixedPoly.slice();
+  for (let i = 0; i < 4; i++) {
+    const A = rotPoly[i];
+    const B = rotPoly[(i + 1) % 4];
+    poly = clipPolygon(poly, A, B);
+    if (poly.length === 0) break;
+  }
+  return poly;
+}
+
+function polygonArea(poly) {
+  let s = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const P = poly[i];
+    const Q = poly[(i + 1) % poly.length];
+    s += P.x * Q.y - Q.x * P.y;
+  }
+  return Math.abs(s) / 2;
+}
+
+// 画多边形
+function drawPoly(poly, fill, stroke, lw = 2) {
+  if (poly.length < 2) return;
+  ctx.beginPath();
+  const [x0, y0] = toPx(poly[0].x, poly[0].y);
+  ctx.moveTo(x0, y0);
+  for (let i = 1; i < poly.length; i++) {
+    const [x, y] = toPx(poly[i].x, poly[i].y);
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+
+// 画一个点
+function drawDot(p, color, r = 8) {
+  const [x, y] = toPx(p.x, p.y);
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+
+  const rot = rotSquare(angle);
+
+  // 画固定正方形
+  drawPoly(fixed, 'rgba(148, 163, 184, 0.10)', '#94a3b8', 2);
+
+  // 画旋转正方形
+  drawPoly(rot, 'rgba(56, 189, 248, 0.12)', '#38bdf8', 2);
+
+  // 计算并画重叠区域
+  const inter = intersection(fixed, rot);
+  drawPoly(inter, 'rgba(250, 204, 21, 0.55)', '#facc15', 2);
+
+  // 画公共左上角
+  drawDot({x: 0, y: 0}, '#f472b6', 6);
+
+  // 画旋转正方形的可拖动顶点（用右上角那个顶点方便拖）
+  // 旋转正方形顶点顺序：0 左上(公共), 1 右上, 2 右下, 3 左下
+  drawDot(rot[1], '#38bdf8', 9);
+  drawDot(rot[2], '#38bdf8', 7);
+  drawDot(rot[3], '#38bdf8', 7);
+
+  // 更新面板
+  const deg = angle * 180 / Math.PI;
+  angEl.textContent = deg.toFixed(1) + '°';
+  areaEl.textContent = polygonArea(inter).toFixed(6);
+}
+
+// 拖动交互：拖动旋转正方形任意一个非公共顶点
+let dragging = false;
+
+function getMouse(e) {
+  const rect = cv.getBoundingClientRect();
+  const scaleX = cv.width / rect.width;
+  const scaleY = cv.height / rect.height;
+  const x = (e.clientX - rect.left) * scaleX;
+  const y = (e.clientY - rect.top) * scaleY;
+  return [x, y];
+}
+
+function distToDot(px, py, p) {
+  const [x, y] = toPx(p.x, p.y);
+  return Math.hypot(px - x, py - y);
+}
+
+function onDown(e) {
+  const [mx, my] = getMouse(e);
+  const rot = rotSquare(angle);
+  for (let i = 1; i < 4; i++) {
+    if (distToDot(mx, my, rot[i]) < 18) {
+      dragging = true;
+      break;
+    }
+  }
+}
+
+function onMove(e) {
+  if (!dragging) return;
+  const [mx, my] = getMouse(e);
+  // 鼠标相对公共左上角的方向
+  const dx = mx - ox;
+  const dy = my - oy;
+  // 计算角度，注意数学坐标 x 向右，y 向下
+  // 旋转正方形顶点 1 原方向是 (1, 0)，顺时针转 angle 后方向 (cos, -sin)
+  // 所以 angle = atan2(-dy, dx)
+  let a = Math.atan2(-dy, dx);
+  // 限制在 0 ~ 90 度
+  if (a < 0) a = 0;
+  if (a > Math.PI / 2) a = Math.PI / 2;
+  angle = a;
+  draw();
+}
+
+function onUp() { dragging = false; }
+
+cv.addEventListener('pointerdown', onDown);
+cv.addEventListener('pointermove', onMove);
+cv.addEventListener('pointerup', onUp);
+cv.addEventListener('pointerleave', onUp);
+
+draw();
+</script>
 </body>
+</html>
