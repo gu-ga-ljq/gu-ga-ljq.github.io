@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>两个正方形旋转重叠面积</title>
 <style>
+  * { box-sizing: border-box; }
   body {
     margin: 0;
     background: #0f172a;
@@ -13,73 +14,128 @@
     flex-direction: column;
     align-items: center;
     min-height: 100vh;
+    padding: 16px;
   }
-  h1 { font-size: 20px; margin: 16px 0 8px; font-weight: 600; }
-  #wrap { position: relative; }
-  canvas { background: #1e293b; border-radius: 12px; touch-action: none; }
+  h1 { font-size: 20px; margin: 4px 0 10px; font-weight: 600; }
+  .hint { color: #94a3b8; font-size: 13px; margin-bottom: 10px; text-align: center; }
+
+  #stage {
+    position: relative;
+    width: min(92vw, 620px);
+    aspect-ratio: 1 / 1;
+    background: #1e293b;
+    border-radius: 14px;
+    overflow: hidden;
+    touch-action: none;
+    cursor: grab;
+  }
+  #stage:active { cursor: grabbing; }
+  canvas { display: block; width: 100%; height: 100%; }
+
   .panel {
-    display: flex; gap: 24px; margin: 12px 0 20px;
-    font-size: 15px; flex-wrap: wrap; justify-content: center;
+    display: flex; gap: 28px; margin: 14px 0 10px;
+    font-size: 16px; flex-wrap: wrap; justify-content: center;
+    align-items: center;
   }
-  .panel b { color: #38bdf8; font-weight: 600; }
-  .hint { color: #94a3b8; font-size: 13px; margin-bottom: 12px; }
+  .panel b { color: #38bdf8; font-weight: 700; font-size: 20px; }
+  .angle-big b { color: #f472b6; }
+
+  .slider-row {
+    display: flex; align-items: center; gap: 12px;
+    width: min(92vw, 620px);
+    margin-bottom: 8px;
+  }
+  input[type=range] {
+    flex: 1; accent-color: #38bdf8; height: 26px;
+  }
+  .slider-row span { color: #94a3b8; font-size: 13px; min-width: 34px; text-align: right; }
+
+  button {
+    background: #334155; color: #e2e8f0; border: none;
+    padding: 7px 16px; border-radius: 8px; cursor: pointer;
+    font-size: 14px; margin: 0 4px;
+  }
+  button:hover { background: #475569; }
 </style>
 </head>
 <body>
 <h1>两个正方形旋转重叠面积</h1>
-<div class="hint">拖动旋转正方形的顶点（蓝色圆点）绕左上角旋转</div>
-<div id="wrap"><canvas id="cv" width="620" height="620"></canvas></div>
+<div class="hint">在画布上任意位置拖动即可旋转 · 松手后角度保持 · 也可用滑块精确调节</div>
+
+<div id="stage"><canvas id="cv"></canvas></div>
+
 <div class="panel">
-  <div>旋转角 α = <b id="ang">0.0°</b></div>
+  <div class="angle-big">旋转角 α = <b id="ang">0.0°</b></div>
   <div>重叠面积 S = <b id="area">1.000000</b></div>
 </div>
 
+<div class="slider-row">
+  <span>0°</span>
+  <input id="slider" type="range" min="0" max="90" step="0.1" value="0">
+  <span>90°</span>
+</div>
+<div>
+  <button id="reset">重置 0°</button>
+  <button id="to45">45°</button>
+  <button id="to90">90°</button>
+</div>
+
 <script>
+const stage = document.getElementById('stage');
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 const angEl = document.getElementById('ang');
 const areaEl = document.getElementById('area');
+const slider = document.getElementById('slider');
 
-// 几何设置：正方形边长 1，固定正方形左上角在画布 (ox, oy)
-const SIZE = 1;
-const SCALE = 420;               // 1 单位 = 420 像素
-const ox = 100, oy = 100;        // 公共左上角在画布上的位置
-const sidePx = SIZE * SCALE;     // 420
+// ---------- 几何参数 ----------
+// 数学坐标：公共左上角为原点，x 向右，y 向下，正方形边长 1
+const SIDE = 1;
+let scale = 300;      // 每单位像素，resize 时更新
+let ox = 0, oy = 0;   // 原点的画布位置
 
-// 把数学坐标 (x 向右, y 向下) 转画布坐标
-// 数学坐标原点取公共左上角，x 向右，y 向下
-function toPx(x, y) {
-  return [ox + x * SCALE, oy + y * SCALE];
-}
-
-// 固定正方形顶点（数学坐标，左上角为原点）
 const fixed = [
-  {x: 0, y: 0}, // 左上
-  {x: 1, y: 0}, // 右上
-  {x: 1, y: 1}, // 右下
-  {x: 0, y: 1}  // 左下
+  {x: 0, y: 0}, {x: 1, y: 0}, {x: 1, y: 1}, {x: 0, y: 1}
 ];
 
-let angle = 0; // 弧度，顺时针为正
+let angle = 0; // 弧度
 
-// 旋转正方形：绕左上角 (0,0) 顺时针旋转 angle
+function resize() {
+  const rect = stage.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = rect.width * dpr;
+  cv.height = rect.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const w = rect.width, h = rect.height;
+  // 留边距，正方形占画布约 62%
+  scale = Math.min(w, h) * 0.62;
+  ox = w * 0.19;
+  oy = h * 0.19;
+  draw();
+}
+window.addEventListener('resize', resize);
+
+function toPx(x, y) {
+  return [ox + x * scale, oy + y * scale];
+}
+
 function rotSquare(a) {
   const c = Math.cos(a), s = Math.sin(a);
-  // 顺时针旋转矩阵：x' = x*c + y*s, y' = -x*s + y*c
-  const R = (p) => ({ x: p.x * c + p.y * s, y: -p.x * s + p.y * c });
+  const R = p => ({ x: p.x * c + p.y * s, y: -p.x * s + p.y * c });
   return fixed.map(R);
 }
 
-// 多边形裁剪：保留直线 AB 左侧（叉积 >= 0）
+function cross(P, Q, R) {
+  return (Q.x - P.x) * (R.y - P.y) - (Q.y - P.y) * (R.x - P.x);
+}
+
 function clipPolygon(poly, A, B) {
   const res = [];
   const n = poly.length;
-  const cross = (P, Q, R) => (Q.x - P.x) * (R.y - P.y) - (Q.y - P.y) * (R.x - P.x);
   for (let i = 0; i < n; i++) {
-    const P = poly[i];
-    const Q = poly[(i + 1) % n];
-    const cp = cross(A, B, P);
-    const cq = cross(A, B, Q);
+    const P = poly[i], Q = poly[(i + 1) % n];
+    const cp = cross(A, B, P), cq = cross(A, B, Q);
     if (cp >= -1e-12) res.push(P);
     if ((cp > 1e-12 && cq < -1e-12) || (cp < -1e-12 && cq > 1e-12)) {
       const t = cp / (cp - cq);
@@ -89,13 +145,10 @@ function clipPolygon(poly, A, B) {
   return res;
 }
 
-// 求交集：用旋转正方形四条边裁剪固定正方形
 function intersection(fixedPoly, rotPoly) {
   let poly = fixedPoly.slice();
   for (let i = 0; i < 4; i++) {
-    const A = rotPoly[i];
-    const B = rotPoly[(i + 1) % 4];
-    poly = clipPolygon(poly, A, B);
+    poly = clipPolygon(poly, rotPoly[i], rotPoly[(i + 1) % 4]);
     if (poly.length === 0) break;
   }
   return poly;
@@ -104,14 +157,12 @@ function intersection(fixedPoly, rotPoly) {
 function polygonArea(poly) {
   let s = 0;
   for (let i = 0; i < poly.length; i++) {
-    const P = poly[i];
-    const Q = poly[(i + 1) % poly.length];
+    const P = poly[i], Q = poly[(i + 1) % poly.length];
     s += P.x * Q.y - Q.x * P.y;
   }
   return Math.abs(s) / 2;
 }
 
-// 画多边形
 function drawPoly(poly, fill, stroke, lw = 2) {
   if (poly.length < 2) return;
   ctx.beginPath();
@@ -126,8 +177,7 @@ function drawPoly(poly, fill, stroke, lw = 2) {
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
 }
 
-// 画一个点
-function drawDot(p, color, r = 8) {
+function drawDot(p, color, r = 7) {
   const [x, y] = toPx(p.x, p.y);
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -136,88 +186,107 @@ function drawDot(p, color, r = 8) {
 }
 
 function draw() {
-  ctx.clearRect(0, 0, cv.width, cv.height);
+  const w = cv.width / (window.devicePixelRatio || 1);
+  const h = cv.height / (window.devicePixelRatio || 1);
+  ctx.clearRect(0, 0, w, h);
 
   const rot = rotSquare(angle);
 
-  // 画固定正方形
-  drawPoly(fixed, 'rgba(148, 163, 184, 0.10)', '#94a3b8', 2);
+  // 固定正方形
+  drawPoly(fixed, 'rgba(148,163,184,0.10)', '#94a3b8', 2);
 
-  // 画旋转正方形
-  drawPoly(rot, 'rgba(56, 189, 248, 0.12)', '#38bdf8', 2);
+  // 旋转正方形
+  drawPoly(rot, 'rgba(56,189,248,0.12)', '#38bdf8', 2);
 
-  // 计算并画重叠区域
+  // 重叠区域
   const inter = intersection(fixed, rot);
-  drawPoly(inter, 'rgba(250, 204, 21, 0.55)', '#facc15', 2);
+  drawPoly(inter, 'rgba(250,204,21,0.55)', '#facc15', 2);
 
-  // 画公共左上角
+  // 公共顶点
   drawDot({x: 0, y: 0}, '#f472b6', 6);
 
-  // 画旋转正方形的可拖动顶点（用右上角那个顶点方便拖）
-  // 旋转正方形顶点顺序：0 左上(公共), 1 右上, 2 右下, 3 左下
-  drawDot(rot[1], '#38bdf8', 9);
-  drawDot(rot[2], '#38bdf8', 7);
-  drawDot(rot[3], '#38bdf8', 7);
+  // 旋转正方形其余三个顶点
+  drawDot(rot[1], '#38bdf8', 6);
+  drawDot(rot[2], '#38bdf8', 5);
+  drawDot(rot[3], '#38bdf8', 5);
 
-  // 更新面板
   const deg = angle * 180 / Math.PI;
   angEl.textContent = deg.toFixed(1) + '°';
   areaEl.textContent = polygonArea(inter).toFixed(6);
+  slider.value = deg;
 }
 
-// 拖动交互：拖动旋转正方形任意一个非公共顶点
+// ---------- 拖动：任意位置拖动都能转 ----------
 let dragging = false;
+let startAngle = 0;
+let startPointerAngle = 0;
 
-function getMouse(e) {
-  const rect = cv.getBoundingClientRect();
-  const scaleX = cv.width / rect.width;
-  const scaleY = cv.height / rect.height;
-  const x = (e.clientX - rect.left) * scaleX;
-  const y = (e.clientY - rect.top) * scaleY;
+function pointerToCanvas(e) {
+  const rect = stage.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
   return [x, y];
 }
 
-function distToDot(px, py, p) {
-  const [x, y] = toPx(p.x, p.y);
-  return Math.hypot(px - x, py - y);
+function pointerAngle(x, y) {
+  // 相对公共顶点的角度，数学坐标 x 向右、y 向下
+  // 旋转正方形右上顶点原方向 (1,0)，顺时针转 angle 后为 (cos, -sin)
+  return Math.atan2(-(y - oy), x - ox);
+}
+
+function normalizeAngle(a) {
+  while (a < 0) a += Math.PI * 2;
+  while (a >= Math.PI * 2) a -= Math.PI * 2;
+  return a;
+}
+
+function clampAngle(a) {
+  if (a < 0) return 0;
+  if (a > Math.PI / 2) return Math.PI / 2;
+  return a;
 }
 
 function onDown(e) {
-  const [mx, my] = getMouse(e);
-  const rot = rotSquare(angle);
-  for (let i = 1; i < 4; i++) {
-    if (distToDot(mx, my, rot[i]) < 18) {
-      dragging = true;
-      break;
-    }
-  }
+  dragging = true;
+  stage.setPointerCapture(e.pointerId);
+  const [x, y] = pointerToCanvas(e);
+  startPointerAngle = pointerAngle(x, y);
+  startAngle = angle;
 }
 
 function onMove(e) {
   if (!dragging) return;
-  const [mx, my] = getMouse(e);
-  // 鼠标相对公共左上角的方向
-  const dx = mx - ox;
-  const dy = my - oy;
-  // 计算角度，注意数学坐标 x 向右，y 向下
-  // 旋转正方形顶点 1 原方向是 (1, 0)，顺时针转 angle 后方向 (cos, -sin)
-  // 所以 angle = atan2(-dy, dx)
-  let a = Math.atan2(-dy, dx);
-  // 限制在 0 ~ 90 度
-  if (a < 0) a = 0;
-  if (a > Math.PI / 2) a = Math.PI / 2;
-  angle = a;
+  const [x, y] = pointerToCanvas(e);
+  const cur = pointerAngle(x, y);
+  let delta = cur - startPointerAngle;
+  // 处理跨 ±π 跳变
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  angle = clampAngle(startAngle + delta);
   draw();
 }
 
-function onUp() { dragging = false; }
+function onUp(e) {
+  dragging = false;
+  try { stage.releasePointerCapture(e.pointerId); } catch (_) {}
+}
 
-cv.addEventListener('pointerdown', onDown);
-cv.addEventListener('pointermove', onMove);
-cv.addEventListener('pointerup', onUp);
-cv.addEventListener('pointerleave', onUp);
+stage.addEventListener('pointerdown', onDown);
+stage.addEventListener('pointermove', onMove);
+stage.addEventListener('pointerup', onUp);
+stage.addEventListener('pointercancel', onUp);
 
-draw();
+// ---------- 滑块与按钮 ----------
+slider.addEventListener('input', () => {
+  angle = clampAngle(slider.value * Math.PI / 180);
+  draw();
+});
+
+document.getElementById('reset').onclick = () => { angle = 0; draw(); };
+document.getElementById('to45').onclick = () => { angle = Math.PI / 4; draw(); };
+document.getElementById('to90').onclick = () => { angle = Math.PI / 2; draw(); };
+
+resize();
 </script>
 </body>
 </html>
